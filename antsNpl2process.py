@@ -200,6 +200,11 @@ class Colony:
         if unloaded_ants.shape[0] > 0:
             self.explore(unloaded_ants, the_maze, pos_food, pos_nest, pheromones)
 
+
+    def display(self, screen):
+        [screen.blit(self.sprites[self.directions[i]], (8*self.historic_path[i, self.age[i], 1], 8*self.historic_path[i, self.age[i], 0])) for i in range(self.directions.shape[0])]
+    
+    def updatePheromones(self, pheromones, the_maze):
         old_pos_ants = self.historic_path[range(0, self.seeds.shape[0]), self.age[:], :]
         has_north_exit = np.bitwise_and(the_maze.maze[old_pos_ants[:, 0], old_pos_ants[:, 1]], maze.NORTH) > 0
         has_east_exit = np.bitwise_and(the_maze.maze[old_pos_ants[:, 0], old_pos_ants[:, 1]], maze.EAST) > 0
@@ -210,10 +215,6 @@ class Colony:
                          [has_north_exit[i], has_east_exit[i], has_west_exit[i], has_south_exit[i]]) for i in range(self.directions.shape[0])]
         return food_counter
 
-    def display(self, screen):
-        [screen.blit(self.sprites[self.directions[i]], (8*self.historic_path[i, self.age[i], 1], 8*self.historic_path[i, self.age[i], 0])) for i in range(self.directions.shape[0])]
-
-
 if __name__ == "__main__":
     import sys
     import time
@@ -222,6 +223,13 @@ if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     size = comm.Get_size()
     rank = comm.Get_rank()
+
+    print(rank)
+    # Groupe des communicateurs pour le calcul des fourmis parallélisé
+    group_ant_calc = comm.Get_group().Incl([1,2,3,4,5])
+    comm_group = comm.Create(group_ant_calc)
+    if rank in [1,2,3,4,5]:
+        ant_init_data = np.empty(7, dtype=np.int32)
 
 
 
@@ -284,29 +292,49 @@ if __name__ == "__main__":
 
 # - - - - - - - - - - - - - - - - - - - - -
     
-# - - - - - Comm qui calcule  - - - - - - - 
+# - - - - Comms pour les pheromones - - - - 
 
 # - - - - - - - - - - - - - - - - - - - - -
-    if rank == 1:
+    if rank != 0:
+        
+        # Initialisation des buffers pour Bcast
+        ant_init_data = np.empty(9, dtype=np.int32)
+        alpha_buffer = np.empty(1, dtype=np.float32)
 
-        size_laby = 25, 25
-        if len(sys.argv) > 2:
-            size_laby = int(sys.argv[1]),int(sys.argv[2])
-        nb_ants = size_laby[0]*size_laby[1]//4
-        max_life = 500
-        if len(sys.argv) > 3:
-            max_life = int(sys.argv[3])
-        pos_food = size_laby[0]-1, size_laby[1]-1
-        pos_nest = 0, 0
-        a_maze = maze.Maze(size_laby, 12345)
-        ants = Colony(nb_ants, pos_nest, max_life)
-        unloaded_ants = np.array(range(nb_ants))
-        alpha = 0.9
-        beta  = 0.99
-        if len(sys.argv) > 4:
-            alpha = float(sys.argv[4])
-        if len(sys.argv) > 5:
-            beta = float(sys.argv[5])
+        # Initialisation Paramètres
+        if rank == 1:
+            size_laby = 25, 25
+            nb_ants = size_laby[0]*size_laby[1]//4
+            max_life = 500
+            pos_food = size_laby[0]-1, size_laby[1]-1
+            pos_nest = 0, 0
+            maze_seed = 12345
+            alpha = 0.9
+            beta  = 0.99
+            a_maze = maze.Maze(size_laby, maze_seed)
+            # Données à transmettre pour les communicateurs "fourmis"
+            ant_init_data = np.array([size_laby[0], size_laby[1], nb_ants, max_life, pos_food[0], pos_food[1], pos_nest[0], pos_nest[1], maze_seed],
+                                dtype=np.int32)
+            alpha_buffer = np.array([alpha], dtype=np.float32)
+            total_ants = Colony(nb_ants, pos_nest, max_life)
+            unloaded_ants = np.array(range(nb_ants))
+
+        #Récupération des paramètres 
+        comm_group.Bcast(ant_init_data, root=0)
+        comm_group.Bcast(alpha_buffer, root=0)
+        if rank != 1:
+            size_laby = ant_init_data[0], ant_init_data[1]
+            nb_ants = ant_init_data[2]
+            max_life = ant_init_data[3]
+            pos_food = ant_init_data[4], ant_init_data[5]
+            pos_nest = ant_init_data[6], ant_init_data[7]
+            maze_seed = ant_init_data[8]
+            alpha = alpha_buffer[0]
+            a_maze = maze.Maze(size_laby, 12345)
+        nb_local_ants = nb_ants//(size-1)
+        
+
+
         pherom = pheromone.Pheromon(size_laby, pos_food, alpha, beta)
         food_counter = 0
 
@@ -322,18 +350,27 @@ if __name__ == "__main__":
         while True:
             
             deb = time.time()
-            food_counter = ants.advance(a_maze, pos_food, pos_nest, pherom, food_counter)
+            food_counter = total_ants.advance(a_maze, pos_food, pos_nest, pherom, food_counter)
             pherom.do_evaporation(pos_food)
             end = time.time()
 
             # Envoi continu de données
             comm.Send(pherom.pheromon, dest=0)
-            comm.Send(ants.historic_path, dest=0)
-            comm.Send(ants.age, dest=0)
-            comm.Send(ants.directions, dest=0)
+            comm.Send(total_ants.historic_path, dest=0)
+            comm.Send(total_ants.age, dest=0)
+            comm.Send(total_ants.directions, dest=0)
 
             if food_counter == 1 and not snapshop_taken:
                 # pg.image.save(screen, "MyFirstFood.png")
                 snapshop_taken = True
             # pg.time.wait(500)
             print(f"FPS : {1./(end-deb):6.2f}, nourriture : {food_counter:7d}", end='\r')
+
+
+# - - - - - - - - - - - - - - - - - - - - -
+    
+# - - - - Libération des ressources - - - - 
+
+# - - - - - - - - - - - - - - - - - - - - -
+if group_ant_calc:
+    group_ant_calc.Free()
