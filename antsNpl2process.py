@@ -300,11 +300,12 @@ if __name__ == "__main__":
         # Initialisation des buffers pour Bcast
         ant_init_data = np.empty(9, dtype=np.int32)
         alpha_buffer = np.empty(1, dtype=np.float32)
+        total_historic_buffer = None
 
         # Initialisation Paramètres
         if rank == 1:
             size_laby = 25, 25
-            nb_ants = size_laby[0]*size_laby[1]//4
+            nb_ants = 155 # size_laby[0]*size_laby[1]//4
             max_life = 500
             pos_food = size_laby[0]-1, size_laby[1]-1
             pos_nest = 0, 0
@@ -330,8 +331,16 @@ if __name__ == "__main__":
             pos_nest = ant_init_data[6], ant_init_data[7]
             maze_seed = ant_init_data[8]
             alpha = alpha_buffer[0]
-            a_maze = maze.Maze(size_laby, 12345)
+            a_maze = maze.Maze(size_laby, maze_seed)
         nb_local_ants = nb_ants//(size-1)
+        print("Local Ants : ", nb_local_ants, "Total_anst : ", nb_ants)
+        local_ants = Colony(nb_local_ants, pos_nest, max_life)
+        total_historic_buffer = None
+        if rank == 1:
+            print(total_ants.historic_path.shape)
+            total_historic_buffer =  total_ants.historic_path.reshape([size - 1, nb_local_ants, max_life+1, 2])
+        
+        comm_group.Scatter(total_historic_buffer, local_ants.historic_path, root=0)
         
 
 
