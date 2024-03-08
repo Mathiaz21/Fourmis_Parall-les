@@ -320,7 +320,9 @@ if __name__ == "__main__":
         comm.Send(floatBuffer, 0)
 
         snapshop_taken = False
-        while True:
+        img_counter = 0
+        t_start = time.time()
+        while img_counter < 5000:
             
             deb = time.time()
             food_counter = ants.advance(a_maze, pos_food, pos_nest, pherom, food_counter)
@@ -338,3 +340,6 @@ if __name__ == "__main__":
                 snapshop_taken = True
             # pg.time.wait(500)
             print(f"FPS : {1./(end-deb):6.2f}, nourriture : {food_counter:7d}", end='\r')
+            img_counter += 1
+        t_end = time.time()
+        print("t_ref = ", t_end - t_start)

@@ -224,7 +224,7 @@ if __name__ == "__main__":
     size = comm.Get_size()
     rank = comm.Get_rank()
 
-    print(rank)
+
     # Groupe des communicateurs pour le calcul des fourmis parallélisé
     group_ant_calc = comm.Get_group().Incl([i for i in range(1,size)])
     comm_group = comm.Create(group_ant_calc)
@@ -280,7 +280,6 @@ if __name__ == "__main__":
             comm.Recv(ants.historic_path, source=1)
             comm.Recv(ants.age, source=1)
             comm.Recv(ants.directions, source=1)
-            print(ants.historic_path.shape)
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     pg.quit()
@@ -289,7 +288,7 @@ if __name__ == "__main__":
             screen.blit(mazeImg, (0, 0))
             ants.display(screen)
             pg.display.update()
-    
+            
 
 # - - - - - - - - - - - - - - - - - - - - -
 
@@ -307,6 +306,7 @@ if __name__ == "__main__":
 
         # Initialisation Paramètres
         if rank == 1:
+    
             size_laby = 25, 25
             nb_ants = size_laby[0]*size_laby[1]//4
             nb_ants -= nb_ants%(size-1)
@@ -353,8 +353,8 @@ if __name__ == "__main__":
         a_maze = maze.Maze(size_laby, maze_seed)
         pherom = pheromone.Pheromon(size_laby, pos_food, alpha, beta)
         nb_local_ants = nb_ants//(size-1)
-        print("Local Ants : ", nb_local_ants, "Total_anst : ", nb_ants)
         local_ants = Colony(nb_local_ants, pos_nest, max_life)
+        local_ants.seeds += rank # Restauration de l'aléatoire
         total_historic_buffer = None
         total_age_buffer = None
         total_directions_buffer = None
@@ -369,13 +369,15 @@ if __name__ == "__main__":
         
         # Boucle principale des Backends
         snapshop_taken = False
-        while True:
+        img_counter = 0
+        t_start = time.time()
+        while img_counter < 5000:
             # Calcul Parallèle
             local_food_counter = 0
             comm_group.Bcast(pherom.pheromon, root=0)
-            deb = time.time()
             local_food_counter = local_ants.advance(a_maze, pos_food, pos_nest, pherom, local_food_counter)
-            end = time.time()
+            if local_food_counter == None:
+                local_food_counter = 0
 
             # Envoi des données au Back Maître
             local_food_buffer[0] = local_food_counter
@@ -387,6 +389,7 @@ if __name__ == "__main__":
 
 
             if rank == 1:
+                deb = time.time()
                 total_ants.historic_path = total_historic_buffer.reshape(nb_ants, max_life+1, 2)
                 total_ants.age = total_age_buffer.reshape(nb_ants)
                 total_ants.directions = total_directions_buffer.reshape(nb_ants)
@@ -406,7 +409,11 @@ if __name__ == "__main__":
                     # pg.image.save(screen, "MyFirstFood.png")
                     snapshop_taken = True
                 # pg.time.wait(500)
+                end = time.time()
                 print(f"FPS : {1./(end-deb):6.2f}, nourriture : {total_food_counter:7d}", end='\r')
+            img_counter += 1
+        t_end = time.time()
+        print("tps_ref : ", t_end-t_start)
 
 
 # - - - - - - - - - - - - - - - - - - - - -
